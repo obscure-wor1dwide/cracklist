@@ -29,6 +29,8 @@ import {
   Info,
   ShieldCheck,
   HelpCircle,
+  Settings,
+  Home,
 } from "lucide-react";
 import {
   LineChart,
@@ -394,15 +396,27 @@ function NoGroupsScreen({ onCreate, onJoin }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
+  const [pendingMessage, setPendingMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setPendingMessage("");
     setSubmitting(true);
     const result = tab === "join" ? await onJoin(code) : await onCreate(name);
     setSubmitting(false);
-    if (result?.error) setError(result.error);
+    if (result?.error) {
+      setError(result.error);
+      return;
+    }
+    // A private group's invite code doesn't add you instantly — groups stays
+    // empty and this screen never unmounts, so it needs its own feedback
+    // rather than relying on the parent re-rendering past it.
+    if (result?.status === "pending") {
+      setCode("");
+      setPendingMessage("Request sent — waiting for a member to approve you.");
+    }
   };
 
   return (
@@ -433,6 +447,7 @@ function NoGroupsScreen({ onCreate, onJoin }) {
               onClick={() => {
                 setTab(t.id);
                 setError("");
+                setPendingMessage("");
               }}
               className="flex-1 rounded-lg py-1.5 text-xs font-semibold"
               style={
@@ -445,6 +460,12 @@ function NoGroupsScreen({ onCreate, onJoin }) {
             </button>
           ))}
         </div>
+
+        {pendingMessage && (
+          <p className="text-xs mb-3" style={{ color: C.primary }}>
+            {pendingMessage}
+          </p>
+        )}
 
         <form onSubmit={handleSubmit}>
           {tab === "join" ? (
@@ -1759,10 +1780,175 @@ function LearnScreen({ onBack }) {
   );
 }
 
+// ---------- dashboard (landing screen) ----------
+function DashboardScreen({ profile, groups, partner, onOpenProfile, onOpenGroup, onQuickLog, onNav }) {
+  const allYourEvents = useMemo(() => {
+    const events = [];
+    groups.forEach((g) => {
+      g.activity.forEach((e) => {
+        if (e.playerId === "you") events.push(e);
+      });
+    });
+    return events.sort((a, b) => b.timestamp - a.timestamp);
+  }, [groups]);
+
+  const totalCracks = allYourEvents.length;
+
+  const currentStreak = useMemo(() => {
+    if (allYourEvents.length === 0) return 0;
+    const daySet = new Set(allYourEvents.map((e) => new Date(e.timestamp).toDateString()));
+    let streak = 0;
+    let cursor = new Date();
+    while (daySet.has(cursor.toDateString())) {
+      streak++;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+    return streak;
+  }, [allYourEvents]);
+
+  const recentEvents = allYourEvents.slice(0, 5);
+
+  return (
+    <div className="min-h-screen w-full font-sans pb-16" style={{ backgroundColor: C.bg, color: C.text }}>
+      <div className="w-full max-w-md mx-auto px-5 pt-10">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <p className="text-xs" style={{ color: C.muted }}>
+              Welcome back
+            </p>
+            <h1 className="font-display text-2xl font-bold tracking-tight">{profile.name}</h1>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenProfile}
+            className="w-11 h-11 rounded-full flex items-center justify-center font-display font-bold overflow-hidden flex-shrink-0"
+            style={{ backgroundColor: profile.color, color: "white" }}
+          >
+            {profile.avatarPhoto ? (
+              <img src={profile.avatarPhoto} alt="" className="w-full h-full object-cover" />
+            ) : (
+              profile.name.charAt(0).toUpperCase() || "Y"
+            )}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div
+            className="rounded-2xl p-4 flex flex-col items-center"
+            style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}
+          >
+            <Zap size={16} style={{ color: C.primary }} className="mb-1" />
+            <span className="font-display text-xl font-bold">{totalCracks}</span>
+            <span className="text-[11px]" style={{ color: C.muted }}>
+              All-time
+            </span>
+          </div>
+          <div
+            className="rounded-2xl p-4 flex flex-col items-center"
+            style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}
+          >
+            <Flame size={16} style={{ color: C.primary }} className="mb-1" />
+            <span className="font-display text-xl font-bold">{currentStreak}</span>
+            <span className="text-[11px]" style={{ color: C.muted }}>
+              Day streak
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onQuickLog}
+          className="w-full rounded-2xl py-4 font-display font-bold mb-8"
+          style={{ backgroundColor: C.primary, color: "white" }}
+        >
+          I Cracked
+        </button>
+
+        {partner && (
+          <button
+            type="button"
+            onClick={() => onNav("calendar")}
+            className="w-full rounded-2xl p-4 mb-6 flex items-center justify-between"
+            style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}
+          >
+            <div className="flex items-center gap-3">
+              <span
+                className="w-9 h-9 rounded-full flex items-center justify-center font-display font-bold text-sm"
+                style={{ backgroundColor: partner.color, color: "white" }}
+              >
+                {partner.name.charAt(0).toUpperCase()}
+              </span>
+              <div className="text-left">
+                <div className="text-sm font-medium">Linked with {partner.name}</div>
+                <div className="text-[11px]" style={{ color: C.muted }}>
+                  View shared calendar
+                </div>
+              </div>
+            </div>
+            <ChevronRight size={16} style={{ color: C.muted }} />
+          </button>
+        )}
+
+        <div className="flex items-center gap-2 mb-3 text-xs" style={{ color: C.muted }}>
+          <Users size={13} />
+          Your groups
+        </div>
+        <div className="flex flex-col gap-2 mb-8">
+          {groups.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => onOpenGroup(g.id)}
+              className="flex items-center justify-between rounded-2xl px-4 py-3.5"
+              style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}
+            >
+              <div className="text-left">
+                <div className="text-sm font-medium flex items-center gap-1.5">
+                  {g.name}
+                  {g.private && <Lock size={11} style={{ color: C.muted }} />}
+                </div>
+                <div className="text-xs" style={{ color: C.muted }}>
+                  {g.players.length} members
+                </div>
+              </div>
+              <ChevronRight size={16} style={{ color: C.muted }} />
+            </button>
+          ))}
+        </div>
+
+        {recentEvents.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 mb-3 text-xs" style={{ color: C.muted }}>
+              <Clock size={13} />
+              Recent activity
+            </div>
+            <div className="flex flex-col gap-2">
+              {recentEvents.map((e) => (
+                <div
+                  key={e.id}
+                  className="flex items-center justify-between rounded-2xl px-4 py-3 text-sm"
+                  style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}
+                >
+                  <span>
+                    {e.mood} {e.location}
+                  </span>
+                  <span className="text-[11px]" style={{ color: C.muted }}>
+                    {timeAgo(e.timestamp)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- component ----------
 export default function Cracklist() {
   const [entered, setEntered] = useState(false);
-  const [view, setView] = useState("app"); // "app" | "profile"
+  const [view, setView] = useState("dashboard"); // "dashboard" | "app" | "profile" | ...
 
   // Device-local only (not synced via Supabase) — purely a display preference.
   const [themeId, setThemeId] = useState(() => getStoredThemeId());
@@ -1792,6 +1978,11 @@ export default function Cracklist() {
     loading: groupsLoading,
     createGroup: createGroupRemote,
     joinGroup: joinGroupRemote,
+    renameGroup,
+    setGroupPrivate,
+    fetchPendingRequests,
+    approveRequest,
+    denyRequest,
   } = useGroups(userId, profile?.name, profile?.color);
   const [activeGroupId, setActiveGroupId] = useState(null);
   useEffect(() => {
@@ -1806,6 +1997,12 @@ export default function Cracklist() {
   const [newGroupName, setNewGroupName] = useState("");
   const [groupModalError, setGroupModalError] = useState("");
   const [groupModalSubmitting, setGroupModalSubmitting] = useState(false);
+
+  const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
+  const [editingGroupName, setEditingGroupName] = useState(false);
+  const [draftGroupName, setDraftGroupName] = useState("");
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [pendingRequestsLoading, setPendingRequestsLoading] = useState(false);
 
   const [range, setRange] = useState("weekly");
   const [leaderboardMode, setLeaderboardMode] = useState("points"); // "points" | "cracks"
@@ -2048,15 +2245,19 @@ export default function Cracklist() {
     if (!code) return;
     setGroupModalError("");
     setGroupModalSubmitting(true);
-    const { error, groupId } = await joinGroupRemote(code);
+    const { error, status, groupId } = await joinGroupRemote(code);
     setGroupModalSubmitting(false);
     if (error) {
       setGroupModalError(error);
       return;
     }
-    if (groupId) setActiveGroupId(groupId);
     setGroupModalOpen(false);
     setJoinCodeInput("");
+    if (status === "pending") {
+      showToast("Request sent — waiting for a member to approve you");
+      return;
+    }
+    if (groupId) setActiveGroupId(groupId);
     showToast("Joined group 🎉");
   };
 
@@ -2095,6 +2296,51 @@ export default function Cracklist() {
     showToast("Calendars unlinked");
   };
 
+  const refreshPendingRequests = async () => {
+    setPendingRequestsLoading(true);
+    const rows = await fetchPendingRequests(activeGroupId);
+    setPendingRequests(rows);
+    setPendingRequestsLoading(false);
+  };
+
+  const saveGroupName = async () => {
+    const trimmed = draftGroupName.trim();
+    if (!trimmed) return;
+    const { error } = await renameGroup(activeGroupId, trimmed);
+    if (error) {
+      showToast(error);
+      return;
+    }
+    setEditingGroupName(false);
+  };
+
+  const togglePrivate = async () => {
+    const { error } = await setGroupPrivate(activeGroupId, !activeGroup.private);
+    if (error) {
+      showToast(error);
+      return;
+    }
+    if (!activeGroup.private) refreshPendingRequests();
+  };
+
+  const approveOne = async (requestId) => {
+    const { error } = await approveRequest(requestId);
+    if (error) {
+      showToast(error);
+      return;
+    }
+    refreshPendingRequests();
+  };
+
+  const denyOne = async (requestId) => {
+    const { error } = await denyRequest(requestId);
+    if (error) {
+      showToast(error);
+      return;
+    }
+    refreshPendingRequests();
+  };
+
   if (!entered) {
     return <SplashScreen onEnter={() => setEntered(true)} />;
   }
@@ -2129,6 +2375,23 @@ export default function Cracklist() {
 
   if (groups.length === 0) {
     return <NoGroupsScreen onCreate={createGroupRemote} onJoin={joinGroupRemote} />;
+  }
+
+  if (view === "dashboard") {
+    return (
+      <DashboardScreen
+        profile={profile}
+        groups={groups}
+        partner={partner}
+        onOpenProfile={() => setView("profile")}
+        onOpenGroup={(groupId) => {
+          setActiveGroupId(groupId);
+          setView("app");
+        }}
+        onQuickLog={() => setSurveyOpen(true)}
+        onNav={setView}
+      />
+    );
   }
 
   if (view === "profile") {
@@ -2245,6 +2508,14 @@ export default function Cracklist() {
             )}
           </button>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setView("dashboard")}
+              className="flex items-center justify-center rounded-full p-1.5"
+              style={{ backgroundColor: C.card, border: `1px solid ${C.border}`, color: C.primary }}
+            >
+              <Home size={14} />
+            </button>
             <div className="relative">
               <button
                 type="button"
@@ -2368,7 +2639,30 @@ export default function Cracklist() {
           </button>
         </div>
 
-        <h1 className="font-display text-2xl font-bold tracking-tight mb-1">{activeGroup.name}</h1>
+        <div className="flex items-center gap-2 mb-1">
+          <h1 className="font-display text-2xl font-bold tracking-tight">{activeGroup.name}</h1>
+          {activeGroup.private && <Lock size={14} style={{ color: C.muted }} />}
+          <button
+            type="button"
+            onClick={() => {
+              setDraftGroupName(activeGroup.name);
+              setEditingGroupName(false);
+              setPendingRequests([]);
+              setGroupSettingsOpen(true);
+              if (activeGroup.private) {
+                setPendingRequestsLoading(true);
+                fetchPendingRequests(activeGroup.id).then((rows) => {
+                  setPendingRequests(rows);
+                  setPendingRequestsLoading(false);
+                });
+              }
+            }}
+            className="flex items-center justify-center rounded-full p-1"
+            style={{ color: C.muted }}
+          >
+            <Settings size={16} />
+          </button>
+        </div>
         <button
           onClick={copyCode}
           className="flex items-center gap-1.5 text-xs mb-6"
@@ -2738,6 +3032,158 @@ export default function Cracklist() {
                 </button>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {groupSettingsOpen && (
+        <div
+          className="fixed inset-0 flex items-end justify-center z-50"
+          style={{ backgroundColor: "rgba(0,0,0,0.35)" }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setGroupSettingsOpen(false);
+          }}
+        >
+          <div
+            className="modal-in w-full max-w-md rounded-t-3xl p-6 overflow-y-auto"
+            style={{ backgroundColor: C.card, borderTop: `1px solid ${C.border}`, maxHeight: "85vh" }}
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-display text-lg font-bold">Group settings</h2>
+              <button type="button" onClick={() => setGroupSettingsOpen(false)}>
+                <X size={20} style={{ color: C.muted }} />
+              </button>
+            </div>
+
+            <label className="text-[11px] mb-1 block" style={{ color: C.muted }}>
+              Group name
+            </label>
+            {editingGroupName ? (
+              <div className="flex items-center gap-2 mb-6">
+                <input
+                  type="text"
+                  value={draftGroupName}
+                  onChange={(e) => setDraftGroupName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && saveGroupName()}
+                  autoFocus
+                  className="flex-1 rounded-xl px-3 py-2 text-sm outline-none"
+                  style={{ backgroundColor: C.chipBg, color: C.text, border: `1px solid ${C.border}` }}
+                />
+                <button
+                  type="button"
+                  onClick={saveGroupName}
+                  className="rounded-full p-2"
+                  style={{ backgroundColor: C.primary, color: "white" }}
+                >
+                  <Check size={14} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditingGroupName(true)}
+                className="flex items-center gap-1.5 font-display text-lg font-bold mb-6"
+              >
+                {activeGroup.name}
+                <span className="text-xs font-sans font-normal" style={{ color: C.primary }}>
+                  Edit
+                </span>
+              </button>
+            )}
+
+            <div
+              className="rounded-2xl p-4 mb-6 flex items-center justify-between"
+              style={{ backgroundColor: C.chipBg }}
+            >
+              <div className="pr-3">
+                <div className="text-sm font-medium mb-0.5 flex items-center gap-1.5">
+                  <Lock size={13} />
+                  Private group
+                </div>
+                <div className="text-xs" style={{ color: C.muted }}>
+                  New joins by invite code need a member to approve them first.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={togglePrivate}
+                className="flex-shrink-0 w-12 h-7 rounded-full relative transition-colors"
+                style={{ backgroundColor: activeGroup.private ? C.primary : C.border }}
+              >
+                <div
+                  className="absolute top-1 w-5 h-5 rounded-full bg-white transition-all"
+                  style={{ left: activeGroup.private ? "26px" : "4px" }}
+                />
+              </button>
+            </div>
+
+            {activeGroup.private && (
+              <div className="mb-6">
+                <div className="text-[11px] mb-2" style={{ color: C.muted }}>
+                  Pending requests
+                </div>
+                {pendingRequestsLoading ? (
+                  <p className="text-xs" style={{ color: C.muted }}>
+                    Loading…
+                  </p>
+                ) : pendingRequests.length === 0 ? (
+                  <p className="text-xs" style={{ color: C.muted }}>
+                    No one's waiting right now.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {pendingRequests.map((r) => (
+                      <div
+                        key={r.id}
+                        className="flex items-center justify-between rounded-xl px-3 py-2"
+                        style={{ backgroundColor: C.chipBg }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="w-6 h-6 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: r.color }}
+                          />
+                          <span className="text-xs font-medium">{r.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => denyOne(r.id)}
+                            className="rounded-full p-1.5"
+                            style={{ backgroundColor: C.card, color: C.muted, border: `1px solid ${C.border}` }}
+                          >
+                            <X size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => approveOne(r.id)}
+                            className="rounded-full p-1.5"
+                            style={{ backgroundColor: C.primary, color: "white" }}
+                          >
+                            <Check size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="text-[11px] mb-2" style={{ color: C.muted }}>
+              Members · {players.length}
+            </div>
+            <div className="flex flex-col gap-2">
+              {players.map((p) => (
+                <div key={p.id} className="flex items-center gap-2 px-1 py-1">
+                  <span className="w-6 h-6 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
+                  <span className="text-sm">
+                    {p.name}
+                    {p.isYou && <span style={{ color: C.muted2 }}> (you)</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

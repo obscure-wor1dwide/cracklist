@@ -37,7 +37,7 @@ export function useGroups(userId, youName, youColor) {
 
     const { data: memberships, error: membershipError } = await supabase
       .from("group_members")
-      .select("group_id, groups(id, name, invite_code)")
+      .select("group_id, groups(id, name, invite_code, private)")
       .eq("user_id", userId);
 
     if (membershipError) {
@@ -162,6 +162,7 @@ export function useGroups(userId, youName, youColor) {
           id: g.id,
           name: g.name,
           inviteCode: g.invite_code,
+          private: g.private,
           players,
           activity: activityByGroup.get(g.id) || [],
           challengeClaims: claimsByGroup.get(g.id) || [],
@@ -198,15 +199,83 @@ export function useGroups(userId, youName, youColor) {
   const joinGroup = useCallback(
     async (code) => {
       if (!userId || !code.trim()) return { error: "Code required" };
-      const { data: groupId, error } = await supabase.rpc("join_group_by_code", {
+      // join_group_by_code returns jsonb ({status, group_id}, snake_case)
+      // rather than a plain uuid, so a private group can report back
+      // "pending" instead of an instant join.
+      const { data, error } = await supabase.rpc("join_group_by_code", {
         code: code.trim().toUpperCase(),
       });
       if (error) return { error: error.message };
       await refresh();
-      return { groupId };
+      return { status: data?.status, groupId: data?.group_id };
     },
     [userId, refresh]
   );
 
-  return { groups, setGroups, loading, createGroup, joinGroup, refresh };
+  const renameGroup = useCallback(
+    async (groupId, name) => {
+      if (!name.trim()) return { error: "Name required" };
+      const { error } = await supabase.from("groups").update({ name: name.trim() }).eq("id", groupId);
+      if (error) return { error: error.message };
+      await refresh();
+      return {};
+    },
+    [refresh]
+  );
+
+  const setGroupPrivate = useCallback(
+    async (groupId, isPrivate) => {
+      const { error } = await supabase.from("groups").update({ private: isPrivate }).eq("id", groupId);
+      if (error) return { error: error.message };
+      await refresh();
+      return {};
+    },
+    [refresh]
+  );
+
+  // Fetched on-demand when the group-settings sheet opens, not folded into
+  // the bulk refresh() above — pending requests aren't needed for the
+  // leaderboard view most groups will spend their time in.
+  const fetchPendingRequests = useCallback(async (groupId) => {
+    const { data, error } = await supabase
+      .from("pending_join_requests")
+      .select("id, user_id, name, color, avatar_url, created_at")
+      .eq("group_id", groupId)
+      .order("created_at", { ascending: true });
+    if (error) {
+      console.error("Failed to load pending requests", error);
+      return [];
+    }
+    return data || [];
+  }, []);
+
+  const approveRequest = useCallback(
+    async (requestId) => {
+      const { error } = await supabase.rpc("approve_join_request", { request_id: requestId });
+      if (error) return { error: error.message };
+      await refresh();
+      return {};
+    },
+    [refresh]
+  );
+
+  const denyRequest = useCallback(async (requestId) => {
+    const { error } = await supabase.rpc("deny_join_request", { request_id: requestId });
+    if (error) return { error: error.message };
+    return {};
+  }, []);
+
+  return {
+    groups,
+    setGroups,
+    loading,
+    createGroup,
+    joinGroup,
+    renameGroup,
+    setGroupPrivate,
+    fetchPendingRequests,
+    approveRequest,
+    denyRequest,
+    refresh,
+  };
 }
