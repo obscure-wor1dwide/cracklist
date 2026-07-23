@@ -13,8 +13,8 @@ during the next pass.
   available in this environment)
 - lucide-react for icons
 - recharts for the activity graph
-- No backend yet — everything currently runs on in-memory mock/seeded data
-  (see "Not yet wired to a backend" below)
+- Backend: Supabase (Postgres, Auth, Row-Level Security, Storage) — see
+  "Backend" below
 
 ## Screens / views
 State machine driven by a single `view` string in the root component:
@@ -56,6 +56,13 @@ State machine driven by a single `view` string in the root component:
   entries, challenge claims, and time-range filtering all consistent.
 - **Challenges** reset weekly (`currentWeekNumber()` = epoch week number),
   claimed once per player per week per challenge.
+- **Cross-user reads** (a groupmate's name/color, a linked partner's
+  profile) go through Postgres views that are deliberately NOT
+  `security_invoker` — the view runs as its owner to bypass the base
+  table's owner-only RLS, while the view's own WHERE clause keeps it
+  scoped to the real caller. Setting `security_invoker = true` on one of
+  these views silently breaks it (happened once with `group_profiles` —
+  it only ever returned your own row).
 
 ## Design
 - Color palette: pink/red, defined in a single `C` constants object
@@ -69,29 +76,37 @@ State machine driven by a single `view` string in the root component:
 - Custom fonts loaded via `@import` in a `<style>` tag: Space Grotesk
   (display/headers) + Inter (body)
 
-## Not yet wired to a backend
-Everything currently runs on deterministically-seeded mock data
-(`mulberry32` PRNG) generated client-side:
-- Group activity, challenge claims, global leaderboard handles, and
-  partner-calendar activity are all fake/simulated
-- Area and age-range "averages" on the Community screen are fake numbers
-  hashed from the city/age-range string + current week (not real
-  aggregated user data)
-- No persistence — reloading the page resets all state to the seeded
-  defaults
+## Backend
+Supabase (Postgres + Auth + Row-Level Security + Storage) is fully wired
+in:
+- Groups, activity log, likes, comments, photo reactions (Storage-backed),
+  and challenge claims are all real, persisted rows — nothing here is
+  mock/seeded anymore
+- Global leaderboard is real too: opt-in users only, no bot handles,
+  computed via a `global_leaderboard()` RPC
+- Partner linking is real: invite-code based, `partner_links` table,
+  linked partner's non-private activity shows on the Calendar screen
+- Area and age-range "averages" on the Community screen are still fake —
+  hashed numbers from the city/age-range string + current week, not real
+  aggregated user data (the one unfinished piece of the backend pass)
+- Login is email + password (no magic-link requirement); signup still
+  requires email verification; a "Forgot password" flow exists via
+  `supabase.auth.resetPasswordForEmail`
 
 ## Next steps / open issues
-- [ ] Decide on and wire a real backend (Supabase was the earlier plan)
-      for: groups, activity log, challenge claims, profile data
-- [ ] Real photo storage for reactions (currently base64 data URLs held
-      in React state only, not uploaded anywhere)
-- [ ] Real global/area/age-range aggregation once there's an actual
-      backend to aggregate from
+- [ ] Personal-dashboard home screen (replace the group-leaderboard view
+      as the landing screen)
+- [ ] In-app "let's crack" nudge button + realtime toast to a linked
+      partner (needs Realtime enabled on a `nudges` table)
+- [ ] Real area/age-range aggregation (still fake — see Backend section)
+- [ ] App Store distribution: Capacitor is the likely wrap-not-rewrite
+      path, but Apple/Google content-policy risk for sexual content +
+      user-generated photos/comments hasn't actually been researched —
+      do that before any implementation
 - [ ] Consider splitting `Cracklist.jsx` into separate files per screen
       (SplashScreen, ProfileScreen, CommunityScreen, CalendarScreen,
       LearnScreen, ChallengesScreen are already separate components
       internally — just not separate files yet)
-- [ ] (add anything else you're mid-way on here)
 
 ## Working preferences
 - Show complete updated files rather than partial diffs when practical
