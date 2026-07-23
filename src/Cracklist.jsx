@@ -44,19 +44,17 @@ import { supabase } from "./lib/supabaseClient";
 import { useAuth } from "./hooks/useAuth";
 import { useProfile } from "./hooks/useProfile";
 import { useGroups } from "./hooks/useGroups";
+import { usePartner } from "./hooks/usePartner";
 import AuthScreen from "./screens/AuthScreen";
 import ContactScreen from "./screens/ContactScreen";
+import ResetPasswordScreen from "./screens/ResetPasswordScreen";
 import {
   DAY_MS,
   LOCATIONS,
   QUICK_MOODS,
   mulberry32,
-  generateActivity,
-  seedSocial,
-  randomInviteCode,
   CHALLENGES,
   currentWeekNumber,
-  seedChallengeClaims,
   hashString,
 } from "./lib/mockData";
 import { C } from "./lib/theme";
@@ -163,18 +161,18 @@ function getAgeRangeAverage(ageRange) {
   return Math.round((2 + rand() * 5) * 10) / 10;
 }
 
+// Deterministic anonymous handle for a real user_id — not a bot list, just a
+// display-name generator so the global leaderboard never shows raw uuids.
 const GLOBAL_HANDLES = [
   "night_owl", "sunday_scaries", "quietstorm", "redeye", "no_sleep_92",
   "moonlit", "afterhours", "lowkey_loud", "midweek_mvp", "the_regular",
   "offthebooks", "steady_state", "backroom", "lastcall", "underrated",
 ];
 
-function buildGlobalLeaderboard() {
-  const rand = mulberry32(777);
-  return GLOBAL_HANDLES.map((handle) => ({
-    handle,
-    points: Math.round(3 + rand() * 40),
-  })).sort((a, b) => b.points - a.points);
+function handleForUserId(userId) {
+  const seed = hashString(userId);
+  const word = GLOBAL_HANDLES[seed % GLOBAL_HANDLES.length];
+  return `${word}_${seed % 1000}`;
 }
 
 // ---------- splash screen ----------
@@ -224,10 +222,33 @@ function calculateAge(dob) {
   return age;
 }
 
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function daysInMonth(year, month) {
+  if (!year || !month) return 31;
+  return new Date(Number(year), Number(month), 0).getDate();
+}
+
 function AgeGateScreen({ onVerified }) {
-  const [dob, setDob] = useState("");
+  const [month, setMonth] = useState("");
+  const [day, setDay] = useState("");
+  const [year, setYear] = useState("");
   const [error, setError] = useState("");
   const [rejected, setRejected] = useState(false);
+
+  const maxDay = daysInMonth(year, month);
+  useEffect(() => {
+    if (day && Number(day) > maxDay) setDay(String(maxDay));
+  }, [maxDay, day]);
+
+  const dob = month && day && year
+    ? `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    : "";
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 100 }, (_, i) => currentYear - i);
 
   const handleContinue = () => {
     if (!dob) {
@@ -282,17 +303,56 @@ function AgeGateScreen({ onVerified }) {
         <label className="text-[11px] mb-1 block" style={{ color: C.muted }}>
           Date of birth
         </label>
-        <input
-          type="date"
-          value={dob}
-          onChange={(e) => {
-            setDob(e.target.value);
-            setError("");
-          }}
-          max={new Date().toISOString().split("T")[0]}
-          className="w-full rounded-xl px-3 py-2.5 text-sm outline-none mb-2"
-          style={{ backgroundColor: C.chipBg, color: C.text, border: `1px solid ${C.border}` }}
-        />
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          <select
+            value={month}
+            onChange={(e) => {
+              setMonth(e.target.value);
+              setError("");
+            }}
+            className="w-full rounded-xl px-2 py-2.5 text-sm outline-none"
+            style={{ backgroundColor: C.chipBg, color: C.text, border: `1px solid ${C.border}` }}
+          >
+            <option value="">Month</option>
+            {MONTHS.map((name, i) => (
+              <option key={name} value={i + 1}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={day}
+            onChange={(e) => {
+              setDay(e.target.value);
+              setError("");
+            }}
+            className="w-full rounded-xl px-2 py-2.5 text-sm outline-none"
+            style={{ backgroundColor: C.chipBg, color: C.text, border: `1px solid ${C.border}` }}
+          >
+            <option value="">Day</option>
+            {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+          <select
+            value={year}
+            onChange={(e) => {
+              setYear(e.target.value);
+              setError("");
+            }}
+            className="w-full rounded-xl px-2 py-2.5 text-sm outline-none"
+            style={{ backgroundColor: C.chipBg, color: C.text, border: `1px solid ${C.border}` }}
+          >
+            <option value="">Year</option>
+            {years.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        </div>
         {error && (
           <p className="text-xs mb-2" style={{ color: C.primary }}>
             {error}
@@ -957,8 +1017,23 @@ function ChallengesScreen({ group, onBack, onClaim }) {
 }
 
 // ---------- community screen ----------
-function CommunityScreen({ profile, groups, onBack }) {
+function CommunityScreen({ profile, groups, onBack, userId }) {
   const areaAverage = getAreaAverage(profile.city);
+
+  const [globalRows, setGlobalRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    supabase.rpc("global_leaderboard").then(({ data, error }) => {
+      if (error) {
+        console.error("Failed to load global leaderboard", error);
+        return;
+      }
+      if (!cancelled) setGlobalRows(data || []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const combinedLeaderboard = useMemo(() => {
     const totals = {}; // key: groupId-playerId -> { name, color, points, groupName, isYou }
@@ -993,12 +1068,14 @@ function CommunityScreen({ profile, groups, onBack }) {
   }, [groups, profile]);
 
   const globalLeaderboard = useMemo(() => {
-    const base = buildGlobalLeaderboard();
-    if (!profile.optedIntoGlobal) return base;
-    const yourTotal = combinedLeaderboard.find((r) => r.isYou)?.points ?? 0;
-    const withYou = [...base, { handle: "you (this device)", points: yourTotal, isYou: true }];
-    return withYou.sort((a, b) => b.points - a.points);
-  }, [profile.optedIntoGlobal, combinedLeaderboard]);
+    return globalRows
+      .map((r) => ({
+        handle: r.user_id === userId ? "you" : handleForUserId(r.user_id),
+        points: Number(r.points),
+        isYou: r.user_id === userId,
+      }))
+      .sort((a, b) => b.points - a.points);
+  }, [globalRows, userId]);
 
   return (
     <div className="min-h-screen w-full font-sans pb-16" style={{ backgroundColor: C.bg, color: C.text }}>
@@ -1156,16 +1233,8 @@ const MAJOR_CITIES = [
   { name: "Sydney", lat: -33.87, lon: 151.21 },
 ];
 
-function seedPartnerActivity(code) {
-  // demo only: any code "links" to a deterministic mock partner so the
-  // feature is fully explorable without a second real device
-  const seed = hashString(code.toUpperCase()) + 4000;
-  const partnerPlayer = { id: "partner", name: "Partner", isYou: false, color: "#B0104F" };
-  return generateActivity(seed, [partnerPlayer], 60).filter(() => Math.random() < 0.7);
-}
-
 // ---------- calendar screen ----------
-function CalendarScreen({ profile, setProfile, groups, linkPartner, unlinkPartner, onBack }) {
+function CalendarScreen({ profile, groups, partner, myInviteCode, linkPartner, unlinkPartner, onBack }) {
   const [monthCursor, setMonthCursor] = useState(() => {
     const d = new Date();
     d.setDate(1);
@@ -1188,15 +1257,15 @@ function CalendarScreen({ profile, setProfile, groups, linkPartner, unlinkPartne
   }, [groups]);
 
   const partnerEventsByDay = useMemo(() => {
-    if (!profile.partner) return {};
+    if (!partner) return {};
     const map = {};
-    profile.partner.activity.forEach((e) => {
+    partner.activity.forEach((e) => {
       if (e.isPrivate) return; // private entries never shared, even when linked
       const key = new Date(e.timestamp).toDateString();
       (map[key] = map[key] || []).push(e);
     });
     return map;
-  }, [profile.partner]);
+  }, [partner]);
 
   const year = monthCursor.getFullYear();
   const month = monthCursor.getMonth();
@@ -1236,8 +1305,8 @@ function CalendarScreen({ profile, setProfile, groups, linkPartner, unlinkPartne
             className="flex items-center gap-1.5 text-xs rounded-full px-3 py-1.5"
             style={{ backgroundColor: C.card, border: `1px solid ${C.border}`, color: C.primary }}
           >
-            {profile.partner ? <Link2 size={13} /> : <Users size={13} />}
-            {profile.partner ? "Shared" : "Share"}
+            {partner ? <Link2 size={13} /> : <Users size={13} />}
+            {partner ? "Shared" : "Share"}
           </button>
         </div>
 
@@ -1248,7 +1317,7 @@ function CalendarScreen({ profile, setProfile, groups, linkPartner, unlinkPartne
             className="rounded-2xl p-4 mb-6"
             style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}
           >
-            {profile.partner ? (
+            {partner ? (
               <>
                 <div className="flex items-center justify-between mb-3">
                   <div>
@@ -1277,12 +1346,12 @@ function CalendarScreen({ profile, setProfile, groups, linkPartner, unlinkPartne
                 <button
                   type="button"
                   onClick={() => {
-                    navigator.clipboard?.writeText(profile.myCalendarCode);
+                    navigator.clipboard?.writeText(myInviteCode);
                   }}
                   className="w-full flex items-center justify-between rounded-xl px-3 py-2 mb-3"
                   style={{ backgroundColor: C.chipBg }}
                 >
-                  <span className="font-display tracking-widest text-sm">{profile.myCalendarCode}</span>
+                  <span className="font-display tracking-widest text-sm">{myInviteCode || "…"}</span>
                   <Copy size={13} style={{ color: C.muted }} />
                 </button>
                 <div className="flex gap-2">
@@ -1320,15 +1389,15 @@ function CalendarScreen({ profile, setProfile, groups, linkPartner, unlinkPartne
           </button>
         </div>
 
-        {profile.partner && (
+        {partner && (
           <div className="flex items-center gap-4 mb-3 text-xs" style={{ color: C.muted }}>
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full" style={{ background: profile.color }} />
               You
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full" style={{ background: profile.partner.color }} />
-              Partner
+              <span className="w-2 h-2 rounded-full" style={{ background: partner.color }} />
+              {partner.name}
             </span>
           </div>
         )}
@@ -1376,7 +1445,7 @@ function CalendarScreen({ profile, setProfile, groups, linkPartner, unlinkPartne
                     {hasPartner && (
                       <span
                         className="w-1.5 h-1.5 rounded-full"
-                        style={{ background: isSelected ? "white" : profile.partner.color }}
+                        style={{ background: isSelected ? "white" : partner.color }}
                       />
                     )}
                   </div>
@@ -1416,7 +1485,7 @@ function CalendarScreen({ profile, setProfile, groups, linkPartner, unlinkPartne
                 style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium">Partner</span>
+                  <span className="text-sm font-medium">{partner.name}</span>
                   <span className="text-xs" style={{ color: C.muted2 }}>
                     {new Date(e.timestamp).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
                   </span>
@@ -1664,26 +1733,20 @@ export default function Cracklist() {
   const [entered, setEntered] = useState(false);
   const [view, setView] = useState("app"); // "app" | "profile"
 
-  const { session, loading: authLoading } = useAuth();
+  const { session, loading: authLoading, passwordRecovery, clearPasswordRecovery } = useAuth();
   const userId = session?.user?.id ?? null;
-  const { profile: dbProfile, loading: profileLoading, updateProfile } = useProfile(userId);
-  // Calendar/partner-linking stays mock this pass (see plan doc) — these
-  // fields never touch Supabase, they just ride along on the profile object.
-  const [localProfile, setLocalProfile] = useState({
-    myCalendarCode: randomInviteCode(),
-    partner: null, // { name, color, activity } once linked
-  });
-  const profile = dbProfile ? { ...dbProfile, ...localProfile } : null;
-  // Every existing call site does setProfile(p => ({...p, x})) — i.e. always
-  // passes back the full merged shape. Split it into the columns that are
-  // real (go to Supabase) vs. the calendar-only fields that stay local.
+  const { profile, loading: profileLoading, updateProfile } = useProfile(userId);
   const setProfile = (updater) => {
     if (!profile) return;
     const next = typeof updater === "function" ? updater(profile) : updater;
-    const { myCalendarCode, partner, ...backendFields } = next;
-    setLocalProfile((p) => ({ ...p, myCalendarCode, partner }));
-    updateProfile(backendFields);
+    updateProfile(next);
   };
+  const {
+    partner,
+    myInviteCode,
+    linkPartner: linkPartnerRemote,
+    unlinkPartner: unlinkPartnerRemote,
+  } = usePartner(userId);
 
   const {
     groups,
@@ -1790,9 +1853,10 @@ export default function Cracklist() {
     toastTimer.current = setTimeout(() => setToast(null), 3200);
   };
 
-  const submitCrack = () => {
+  const submitCrack = async () => {
+    const id = crypto.randomUUID();
     const newEvent = {
-      id: Date.now(),
+      id,
       playerId: "you",
       timestamp: Date.now(),
       isPrivate: survey.isPrivate,
@@ -1813,15 +1877,28 @@ export default function Cracklist() {
         ? "Logged privately 🔒 Saved to your profile — your group only sees the point"
         : "Logged. Your group's been notified 🎉"
     );
+    const { error } = await supabase.from("activity").insert({
+      id,
+      group_id: activeGroupId,
+      user_id: userId,
+      is_private: newEvent.isPrivate,
+      duration: newEvent.duration,
+      rating: newEvent.rating,
+      location: newEvent.location,
+      mood: newEvent.mood,
+    });
+    if (error) console.error("Failed to save crack", error);
     setSurvey({ duration: 15, rating: 7, location: LOCATIONS[0], mood: QUICK_MOODS[0], isPrivate: false });
   };
 
-  const claimChallenge = (challenge) => {
+  const claimChallenge = async (challenge) => {
     const weekNumber = currentWeekNumber();
     const already = activeGroup.challengeClaims.some(
       (c) => c.playerId === "you" && c.challengeId === challenge.id && c.weekNumber === weekNumber
     );
     if (already) return;
+    const id = crypto.randomUUID();
+    const timestamp = Date.now();
     setGroups((prev) =>
       prev.map((g) =>
         g.id === activeGroupId
@@ -1829,20 +1906,25 @@ export default function Cracklist() {
               ...g,
               challengeClaims: [
                 ...g.challengeClaims,
-                {
-                  id: `you-${challenge.id}-${Date.now()}`,
-                  playerId: "you",
-                  challengeId: challenge.id,
-                  points: challenge.points,
-                  weekNumber,
-                  timestamp: Date.now(),
-                },
+                { id, playerId: "you", challengeId: challenge.id, points: challenge.points, weekNumber, timestamp },
               ],
             }
           : g
       )
     );
     showToast(`+${challenge.points} pts — ${challenge.title} claimed 🏆`);
+    const { error } = await supabase.from("challenge_claims").insert({
+      id,
+      group_id: activeGroupId,
+      user_id: userId,
+      challenge_id: challenge.id,
+      points: challenge.points,
+      week_number: weekNumber,
+    });
+    // 23505 = unique constraint conflict, i.e. already claimed (race between
+    // tabs/devices) — the local `already` check above covers the common
+    // case, this is just the DB-backed backstop, safe to ignore silently.
+    if (error && error.code !== "23505") console.error("Failed to save challenge claim", error);
   };
 
   const openCameraFor = (activityId) => {
@@ -1850,23 +1932,30 @@ export default function Cracklist() {
     fileInputRef.current?.click();
   };
 
-  const handlePhoto = (e) => {
+  const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
-    if (!file || pendingReactionId.current == null) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const photo = reader.result;
-      updateActiveActivity((prev) =>
-        prev.map((ev) =>
-          ev.id === pendingReactionId.current
-            ? { ...ev, reactions: [...ev.reactions, { by: "You", photo }] }
-            : ev
-        )
-      );
-      pendingReactionId.current = null;
-    };
-    reader.readAsDataURL(file);
+    const activityId = pendingReactionId.current;
     e.target.value = "";
+    if (!file || activityId == null || !userId) return;
+    const path = `${userId}/${Date.now()}-${file.name}`;
+    const { error: uploadError } = await supabase.storage.from("reactions").upload(path, file, { upsert: true });
+    if (uploadError) {
+      console.error("Failed to upload reaction photo", uploadError);
+      pendingReactionId.current = null;
+      return;
+    }
+    const { data } = supabase.storage.from("reactions").getPublicUrl(path);
+    const photo = data.publicUrl;
+    updateActiveActivity((prev) =>
+      prev.map((ev) =>
+        ev.id === activityId ? { ...ev, reactions: [...ev.reactions, { by: "You", photo }] } : ev
+      )
+    );
+    pendingReactionId.current = null;
+    const { error: insertError } = await supabase
+      .from("activity_reactions")
+      .insert({ activity_id: activityId, user_id: userId, photo_url: photo });
+    if (insertError) console.error("Failed to save reaction", insertError);
   };
 
   const copyCode = () => {
@@ -1874,24 +1963,29 @@ export default function Cracklist() {
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const toggleLike = (eventId) => {
+  const toggleLike = async (eventId) => {
+    const currentEvent = activity.find((ev) => ev.id === eventId);
+    const liked = currentEvent?.likes.includes("you");
     updateActiveActivity((prev) =>
       prev.map((ev) => {
         if (ev.id !== eventId) return ev;
-        const liked = ev.likes.includes("You");
         return {
           ...ev,
-          likes: liked ? ev.likes.filter((n) => n !== "You") : [...ev.likes, "You"],
+          likes: liked ? ev.likes.filter((id) => id !== "you") : [...ev.likes, "you"],
         };
       })
     );
+    const { error } = liked
+      ? await supabase.from("activity_likes").delete().eq("activity_id", eventId).eq("user_id", userId)
+      : await supabase.from("activity_likes").insert({ activity_id: eventId, user_id: userId });
+    if (error) console.error("Failed to update like", error);
   };
 
   const toggleComments = (eventId) => {
     setExpandedComments((prev) => ({ ...prev, [eventId]: !prev[eventId] }));
   };
 
-  const addComment = (eventId) => {
+  const addComment = async (eventId) => {
     const text = (commentDrafts[eventId] || "").trim();
     if (!text) return;
     updateActiveActivity((prev) =>
@@ -1902,6 +1996,10 @@ export default function Cracklist() {
       )
     );
     setCommentDrafts((prev) => ({ ...prev, [eventId]: "" }));
+    const { error } = await supabase
+      .from("activity_comments")
+      .insert({ activity_id: eventId, user_id: userId, text });
+    if (error) console.error("Failed to save comment", error);
   };
 
   const nameFor = (id) => players.find((p) => p.id === id)?.name ?? id;
@@ -1941,19 +2039,21 @@ export default function Cracklist() {
     showToast(`Created ${name}`);
   };
 
-  const linkPartner = (code) => {
-    const trimmed = code.trim();
-    if (!trimmed) return;
-    const partnerActivity = seedPartnerActivity(trimmed);
-    setProfile((p) => ({
-      ...p,
-      partner: { name: "Partner", color: "#B0104F", activity: partnerActivity },
-    }));
+  const linkPartner = async (code) => {
+    const { error } = await linkPartnerRemote(code);
+    if (error) {
+      showToast(error);
+      return;
+    }
     showToast("Calendars linked 💗");
   };
 
-  const unlinkPartner = () => {
-    setProfile((p) => ({ ...p, partner: null }));
+  const unlinkPartner = async () => {
+    const { error } = await unlinkPartnerRemote();
+    if (error) {
+      showToast(error);
+      return;
+    }
     showToast("Calendars unlinked");
   };
 
@@ -1963,6 +2063,10 @@ export default function Cracklist() {
 
   if (authLoading) {
     return <LoadingScreen />;
+  }
+
+  if (passwordRecovery) {
+    return <ResetPasswordScreen onDone={clearPasswordRecovery} />;
   }
 
   if (!session) {
@@ -2002,15 +2106,16 @@ export default function Cracklist() {
   }
 
   if (view === "community") {
-    return <CommunityScreen profile={profile} groups={groups} onBack={() => setView("app")} />;
+    return <CommunityScreen profile={profile} groups={groups} onBack={() => setView("app")} userId={userId} />;
   }
 
   if (view === "calendar") {
     return (
       <CalendarScreen
         profile={profile}
-        setProfile={setProfile}
         groups={groups}
+        partner={partner}
+        myInviteCode={myInviteCode}
         linkPartner={linkPartner}
         unlinkPartner={unlinkPartner}
         onBack={() => setView("app")}
@@ -2431,9 +2536,9 @@ export default function Cracklist() {
                   type="button"
                   onClick={() => toggleLike(e.id)}
                   className="flex items-center gap-1.5 text-xs font-medium"
-                  style={{ color: e.likes.includes("You") ? C.primary : C.muted }}
+                  style={{ color: e.likes.includes("you") ? C.primary : C.muted }}
                 >
-                  <Heart size={15} fill={e.likes.includes("You") ? C.primary : "none"} />
+                  <Heart size={15} fill={e.likes.includes("you") ? C.primary : "none"} />
                   {e.likes.length > 0 ? e.likes.length : "Like"}
                 </button>
                 <button
