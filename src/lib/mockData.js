@@ -23,46 +23,6 @@ export function mulberry32(seed) {
   };
 }
 
-export function generateActivity(seed, players, daysBack = 180) {
-  const rand = mulberry32(seed);
-  const events = [];
-  const now = Date.now();
-  let id = 0;
-  for (let d = daysBack; d >= 0; d--) {
-    const dayTime = now - d * 24 * 60 * 60 * 1000;
-    const cracksToday = rand() < 0.55 ? 1 : rand() < 0.8 ? 0 : 2;
-    for (let c = 0; c < cracksToday; c++) {
-      const player = players[Math.floor(rand() * players.length)];
-      const isPrivate = rand() < 0.15;
-      events.push({
-        id: `${seed}-${id++}`,
-        playerId: player.id,
-        timestamp: dayTime - Math.floor(rand() * 20 * 60 * 60 * 1000),
-        isPrivate,
-        duration: Math.round(5 + rand() * 40),
-        rating: Math.round(1 + rand() * 9),
-        location: LOCATIONS[Math.floor(rand() * LOCATIONS.length)],
-        mood: QUICK_MOODS[Math.floor(rand() * QUICK_MOODS.length)],
-        reactions: [],
-        likes: [],
-        comments: [],
-      });
-    }
-  }
-  return events.sort((a, b) => b.timestamp - a.timestamp);
-}
-
-export function seedSocial(events) {
-  const others = ["Alex", "Sam", "Jordan", "Riley", "Casey"];
-  events.slice(0, 6).forEach((e, i) => {
-    if (i % 2 === 0) e.likes = [others[i % others.length]];
-    if (i === 1) {
-      e.comments = [{ by: others[0], text: "lol nice", ts: e.timestamp + 60000 }];
-    }
-  });
-  return events;
-}
-
 export function randomInviteCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
@@ -123,28 +83,4 @@ export const CHALLENGES = [
 
 export function currentWeekNumber() {
   return Math.floor(Date.now() / (7 * DAY_MS));
-}
-
-// deterministically seed some already-claimed challenges for the other
-// (non-"you") members of a group, so the leaderboard feels alive
-export function seedChallengeClaims(seed, players) {
-  const rand = mulberry32(seed + 555);
-  const weekNumber = currentWeekNumber();
-  const claims = [];
-  players.forEach((p) => {
-    if (p.isYou) return;
-    CHALLENGES.forEach((ch) => {
-      if (rand() < 0.35) {
-        claims.push({
-          id: `${p.id}-${ch.id}-seed`,
-          playerId: p.id,
-          challengeId: ch.id,
-          points: ch.points,
-          weekNumber,
-          timestamp: Date.now() - Math.floor(rand() * 5 * DAY_MS),
-        });
-      }
-    });
-  });
-  return claims;
 }

@@ -16,13 +16,21 @@ export default function AuthScreen() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
+  const [forgotPassword, setForgotPassword] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setSubmitting(true);
     try {
-      if (tab === "signin") {
+      if (forgotPassword) {
+        const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin,
+        });
+        if (err) setError(err.message);
+        else setResetSent(true);
+      } else if (tab === "signin") {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password });
         if (err) setError(err.message);
       } else if (tab === "signup") {
@@ -55,32 +63,52 @@ export default function AuthScreen() {
           </p>
         </div>
 
-        <div
-          className="flex rounded-xl p-1 mb-4"
-          style={{ backgroundColor: C.chipBg }}
-        >
-          {TABS.map((t) => (
+        {!forgotPassword && (
+          <div
+            className="flex rounded-xl p-1 mb-4"
+            style={{ backgroundColor: C.chipBg }}
+          >
+            {TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  setTab(t.id);
+                  setError("");
+                  setMagicLinkSent(false);
+                }}
+                className="flex-1 rounded-lg py-1.5 text-xs font-semibold"
+                style={
+                  tab === t.id
+                    ? { backgroundColor: C.primary, color: "white" }
+                    : { backgroundColor: "transparent", color: C.muted }
+                }
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {forgotPassword && resetSent ? (
+          <>
+            <p className="text-sm text-center py-4" style={{ color: C.text }}>
+              Check your email for a link to reset your password.
+            </p>
             <button
-              key={t.id}
               type="button"
               onClick={() => {
-                setTab(t.id);
+                setForgotPassword(false);
+                setResetSent(false);
                 setError("");
-                setMagicLinkSent(false);
               }}
-              className="flex-1 rounded-lg py-1.5 text-xs font-semibold"
-              style={
-                tab === t.id
-                  ? { backgroundColor: C.primary, color: "white" }
-                  : { backgroundColor: "transparent", color: C.muted }
-              }
+              className="w-full text-center text-[11px]"
+              style={{ color: C.muted }}
             >
-              {t.label}
+              Back to sign in
             </button>
-          ))}
-        </div>
-
-        {tab === "magic" && magicLinkSent ? (
+          </>
+        ) : tab === "magic" && magicLinkSent && !forgotPassword ? (
           <p className="text-sm text-center py-4" style={{ color: C.text }}>
             Check your email for a sign-in link.
           </p>
@@ -99,7 +127,7 @@ export default function AuthScreen() {
               style={{ backgroundColor: C.chipBg, color: C.text, border: `1px solid ${C.border}` }}
             />
 
-            {tab !== "magic" && (
+            {tab !== "magic" && !forgotPassword && (
               <>
                 <label className="text-[11px] mb-1 block" style={{ color: C.muted }}>
                   Password
@@ -117,6 +145,20 @@ export default function AuthScreen() {
               </>
             )}
 
+            {tab === "signin" && !forgotPassword && (
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotPassword(true);
+                  setError("");
+                }}
+                className="text-[11px] mb-3 block"
+                style={{ color: C.primary }}
+              >
+                Forgot password?
+              </button>
+            )}
+
             {error && (
               <p className="text-xs mb-3" style={{ color: C.primary }}>
                 {error}
@@ -131,12 +173,29 @@ export default function AuthScreen() {
             >
               {submitting
                 ? "Please wait..."
+                : forgotPassword
+                ? "Send reset link"
                 : tab === "signin"
                 ? "Sign in"
                 : tab === "signup"
                 ? "Create account"
                 : "Send magic link"}
             </button>
+
+            {forgotPassword && (
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotPassword(false);
+                  setResetSent(false);
+                  setError("");
+                }}
+                className="w-full text-center text-[11px] mt-3"
+                style={{ color: C.muted }}
+              >
+                Back to sign in
+              </button>
+            )}
           </form>
         )}
       </div>
