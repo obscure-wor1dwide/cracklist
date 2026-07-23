@@ -59,7 +59,7 @@ import {
   seedChallengeClaims,
   hashString,
 } from "./lib/mockData";
-import { C } from "./lib/theme";
+import { C, THEME_LIST, applyTheme, getStoredThemeId, storeThemeId } from "./lib/theme";
 
 const AVATAR_COLORS = ["#E8285B", "#FF6B6B", "#B0104F", "#FF9DB0", "#8A2846"];
 
@@ -430,7 +430,7 @@ function NoGroupsScreen({ onCreate, onJoin }) {
 }
 
 // ---------- profile screen ----------
-function ProfileScreen({ profile, setProfile, groups, onBack, userId }) {
+function ProfileScreen({ profile, setProfile, groups, onBack, userId, themeId, setThemeId }) {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(profile.name);
   const photoInputRef = useRef(null);
@@ -692,6 +692,37 @@ function ProfileScreen({ profile, setProfile, groups, onBack, userId }) {
                 }
               >
                 {r}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div
+          className="rounded-2xl p-4 mb-3"
+          style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}
+        >
+          <label className="text-xs mb-2 block" style={{ color: C.muted }}>
+            App color — pick whatever feels right, only visible to you
+          </label>
+          <div className="flex gap-3">
+            {THEME_LIST.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setThemeId(t.id)}
+                className="flex flex-col items-center gap-1"
+              >
+                <div
+                  className="w-8 h-8 rounded-full"
+                  style={{
+                    backgroundColor: t.swatch,
+                    outline: themeId === t.id ? `2px solid ${C.text}` : "none",
+                    outlineOffset: 2,
+                  }}
+                />
+                <span className="text-[10px]" style={{ color: C.muted }}>
+                  {t.label}
+                </span>
               </button>
             ))}
           </div>
@@ -1664,6 +1695,13 @@ export default function Cracklist() {
   const [entered, setEntered] = useState(false);
   const [view, setView] = useState("app"); // "app" | "profile"
 
+  // Device-local only (not synced via Supabase) — purely a display preference.
+  const [themeId, setThemeId] = useState(() => getStoredThemeId());
+  applyTheme(themeId); // mutates the shared C object before this render reads it
+  useEffect(() => {
+    storeThemeId(themeId);
+  }, [themeId]);
+
   const { session, loading: authLoading } = useAuth();
   const userId = session?.user?.id ?? null;
   const { profile: dbProfile, loading: profileLoading, updateProfile } = useProfile(userId);
@@ -1997,6 +2035,8 @@ export default function Cracklist() {
         groups={groups}
         onBack={() => setView("app")}
         userId={userId}
+        themeId={themeId}
+        setThemeId={setThemeId}
       />
     );
   }
